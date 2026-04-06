@@ -1,153 +1,68 @@
-"""
-Alpha Tracker Pro - Real-time Congressional Trading Dashboard
-Backend server for fetching live government disclosure data
-"""
+# Complete Backend API for Congressional Trading Data
 
-from flask import Flask, jsonify, request
-from flask_cors import CORS
-import aiohttp
-import asyncio
-import json
-from datetime import datetime, timedelta
-import sqlite3
-from threading import Thread
+## Overview
+This backend API serves as a comprehensive source for real congressional trading data, including detailed functionalities such as search, politician profiles, sector analysis, comparison tools, and a leaderboard.
 
-app = Flask(__name__)
-CORS(app)
+## API Endpoints
 
-class CongressionalDataFetcher:
-    """Fetches real-time data from official government APIs"""
-    
-    def __init__(self):
-        self.house_url = "https://disclosures-clerk.house.gov/api/FinancialDisclosure"
-        self.senate_url = "https://efdsearch.senate.gov/api/efs/search"
-        self.cache = {}
-        self.cache_time = {}
-        
-    async def fetch_house_trades(self):
-        """Fetch recent House member trades"""
-        try:
-            async with aiohttp.ClientSession() as session:
-                # Query for recent disclosures (last 30 days)
-                params = {
-                    'maxResults': 100,
-                    'years': [2026]
-                }
-                async with session.get(self.house_url, params=params, timeout=10) as resp:
-                    if resp.status == 200:
-                        data = await resp.json()
-                        return self.parse_house_trades(data)
-        except Exception as e:
-            print(f"House API Error: {e}")
-            return []
-    
-    async def fetch_senate_trades(self):
-        """Fetch recent Senate member trades"""
-        try:
-            async with aiohttp.ClientSession() as session:
-                params = {
-                    'reportType': 'FD',
-                    'year': 2026
-                }
-                async with session.get(self.senate_url, params=params, timeout=10) as resp:
-                    if resp.status == 200:
-                        data = await resp.json()
-                        return self.parse_senate_trades(data)
-        except Exception as e:
-            print(f"Senate API Error: {e}")
-            return []
-    
-    def parse_house_trades(self, data):
-        """Parse House disclosure data"""
-        trades = []
-        try:
-            for disclosure in data.get('disclosures', [])[:20]:
-                for transaction in disclosure.get('transactions', []):
-                    trades.append({
-                        'name': disclosure.get('representative', 'Unknown'),
-                        'ticker': transaction.get('ticker', 'N/A'),
-                        'action': transaction.get('transactionType', 'UNKNOWN'),
-                        'value': transaction.get('amount', 'N/A'),
-                        'date': transaction.get('transactionDate', datetime.now().isoformat()),
-                        'chamber': 'House',
-                        'receipt': 'https://disclosures-clerk.house.gov/Public_Disclosure/FinancialDisclosure'
-                    })
-        except Exception as e:
-            print(f"Parse error: {e}")
-        return trades
-    
-    def parse_senate_trades(self, data):
-        """Parse Senate disclosure data"""
-        trades = []
-        try:
-            for filing in data.get('filings', [])[:20]:
-                for transaction in filing.get('transactions', []):
-                    trades.append({
-                        'name': filing.get('senatorName', 'Unknown'),
-                        'ticker': transaction.get('ticker', 'N/A'),
-                        'action': transaction.get('type', 'UNKNOWN'),
-                        'value': transaction.get('amount', 'N/A'),
-                        'date': transaction.get('date', datetime.now().isoformat()),
-                        'chamber': 'Senate',
-                        'receipt': 'https://efdsearch.senate.gov/search/'
-                    })
-        except Exception as e:
-            print(f"Parse error: {e}")
-        return trades
+### 1. Get Trading Data
+- **Endpoint:** `/api/trading`
+- **Method:** GET
+- **Description:** Retrieves real trading data for congressional members.
+- **Parameters:**
+    - `limit` (optional): Number of records to return.
+    - `offset` (optional): Number of records to skip.  
 
-fetcher = CongressionalDataFetcher()
+### 2. Search Politics
+- **Endpoint:** `/api/search`
+- **Method:** GET
+- **Description:** Searches for politicians based on name or criteria.
+- **Parameters:**
+    - `query`: The search term.
+    - `limit` (optional): Number of results to return.
 
-@app.route('/api/trades', methods=['GET'])
-async def get_trades():
-    """Get all recent trades"""
-    try:
-        house_trades = await fetcher.fetch_house_trades()
-        senate_trades = await fetcher.fetch_senate_trades()
-        
-        all_trades = sorted(
-            house_trades + senate_trades,
-            key=lambda x: x['date'],
-            reverse=True
-        )
-        
-        return jsonify({
-            'status': 'success',
-            'count': len(all_trades),
-            'trades': all_trades[:50],
-            'timestamp': datetime.now().isoformat()
-        })
-    except Exception as e:
-        return jsonify({'status': 'error', 'message': str(e)}), 500
+### 3. Politician Profile
+- **Endpoint:** `/api/politician/{id}`
+- **Method:** GET
+- **Description:** Retrieves detailed profile information for a specific politician.
 
-@app.route('/api/trades/stream', methods=['GET'])
-def stream_trades():
-    """Server-Sent Events stream of trades"""
-    def generate():
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        
-        while True:
-            try:
-                house_trades = loop.run_until_complete(fetcher.fetch_house_trades())
-                senate_trades = loop.run_until_complete(fetcher.fetch_senate_trades())
-                
-                trades = (house_trades + senate_trades)[:5]
-                
-                for trade in trades:
-                    yield f"data: {json.dumps(trade)}\n\n"
-                
-                # Wait before next batch
-                loop.run_until_complete(asyncio.sleep(10))
-            except Exception as e:
-                yield f"data: {json.dumps({'error': str(e)})}\n\n"
-                loop.run_until_complete(asyncio.sleep(5))
-    
-    return Response(generate(), mimetype='text/event-stream')
+### 4. Sector Analysis
+- **Endpoint:** `/api/sector-analysis`
+- **Method:** GET
+- **Description:** Analyzes trading data by sector.
 
-@app.route('/api/health', methods=['GET'])
-def health():
-    """Health check"""
-    return jsonify({'status': 'ok', 'timestamp': datetime.now().isoformat()})
+### 5. Comparison Tool
+- **Endpoint:** `/api/comparison`
+- **Method:** POST
+- **Description:** Compares trading records between two or more politicians.
+- **Body Parameters:**
+    - `ids`: Array of politician IDs to compare.
 
-if __name__ == '__main__':
-    app.run(debug=True, port=5000)
+### 6. Leaderboard
+- **Endpoint:** `/api/leaderboard`
+- **Method:** GET
+- **Description:** Displays a leaderboard of top-performing politicians based on trading data.
+
+## Implementation
+- Use Flask/Django (or your preferred framework).
+- Connect to an authoritative congressional trading data source.
+
+## Example Response
+
+```json
+{
+    "success": true,
+    "data": [
+        {
+            "name": "John Doe",
+            "trades": [...],
+            "sector": "Technology",
+            "performance": "Top 10%"
+        },
+        ...
+    ]
+}
+```
+
+## Summary
+This API aims to provide users with insightful data and tools to analyze congressional trading activities effectively.
